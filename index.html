@@ -866,9 +866,104 @@
             user-select: none;
             -webkit-user-select: none;
         }
+
+        /* Cloud account sign-in */
+        .auth-gate {
+            position: fixed;
+            inset: 0;
+            z-index: 5000;
+            display: grid;
+            place-items: center;
+            padding: 20px;
+            background: var(--bg);
+            overflow-y: auto;
+        }
+        .auth-card {
+            width: min(100%, 420px);
+            background: var(--card);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 28px;
+            box-shadow: var(--shadow);
+        }
+        .auth-card h2 { font-size: 1.45rem; margin-bottom: 6px; }
+        .auth-subtitle { color: var(--text-light); font-size: 0.92rem; margin-bottom: 22px; }
+        .auth-card .auth-label { display: block; font-size: 0.9rem; font-weight: 600; margin: 14px 0 6px; }
+        .auth-card .auth-input {
+            width: 100%;
+            min-height: 46px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 12px;
+            background: var(--bg);
+            color: var(--text);
+            font: inherit;
+        }
+        .auth-card .auth-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+        .auth-submit {
+            width: 100%;
+            min-height: 46px;
+            margin-top: 20px;
+            border: 0;
+            border-radius: 10px;
+            background: var(--accent);
+            color: #fff;
+            font: inherit;
+            font-weight: 700;
+            cursor: pointer;
+        }
+        .auth-submit:disabled { opacity: 0.65; cursor: wait; }
+        .auth-message { min-height: 1.4em; margin-top: 12px; color: var(--text-light); font-size: 0.88rem; overflow-wrap: anywhere; }
+        .auth-message.error { color: var(--danger-dark); }
+        .auth-security-note { margin-top: 18px; color: var(--text-light); font-size: 0.78rem; }
+        .account-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            padding: 10px 14px;
+            margin: -8px 0 20px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--card);
+            font-size: 0.84rem;
+        }
+        .account-meta { min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+        .account-email { font-weight: 600; }
+        .account-sync { color: var(--text-light); font-size: 0.78rem; }
+        .account-signout {
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            padding: 7px 11px;
+            background: transparent;
+            color: var(--text);
+            font: inherit;
+            cursor: pointer;
+        }
+        .account-signout:hover { border-color: var(--accent); }
     </style>
 </head>
 <body>
+
+    <!-- Cloud sign-in gate -->
+    <div class="auth-gate" id="authGate" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+        <div class="auth-card">
+            <h2 id="authTitle">📚 Tutoring Time Tracker</h2>
+            <p class="auth-subtitle">Sign in to securely access your tutoring records across devices.</p>
+            <form id="authForm">
+                <label class="auth-label" for="authEmail">Email address</label>
+                <input class="auth-input" id="authEmail" name="email" type="email" autocomplete="username" required>
+                <label class="auth-label" for="authPassword">Password</label>
+                <input class="auth-input" id="authPassword" name="password" type="password" autocomplete="current-password" required>
+                <button class="auth-submit" id="authSubmitBtn" type="submit">Sign in</button>
+                <p class="auth-message" id="authMessage" role="status" aria-live="polite">Sign in with your authorized account.</p>
+            </form>
+            <p class="auth-security-note">Access is restricted to authorized accounts. New public sign-ups are disabled.</p>
+        </div>
+    </div>
+
 
     <!-- Theme Toggle -->
     <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">🌙</button>
@@ -884,6 +979,14 @@
         <h1>📚 Tutoring Time Tracker</h1>
         <p>Record and track tutoring sessions for up to 10 students.</p>
     </header>
+
+    <div class="account-bar" id="accountBar" style="display: none;" aria-live="polite">
+        <div class="account-meta">
+            <span class="account-email" id="signedInEmail"></span>
+            <span class="account-sync" id="cloudSyncStatus">Cloud data connected</span>
+        </div>
+        <button class="account-signout" id="signOutBtn" type="button">Sign out</button>
+    </div>
 
     <!-- Students -->
     <section class="card">
@@ -1030,6 +1133,7 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
         // ===================== THEME =====================
         function applyTheme(theme) {
@@ -1139,6 +1243,26 @@
         let historyCycleFilter = 'all';
         let historyMonthFilter = 'all';
 
+        // ===================== CLOUD BACKEND =====================
+        // The publishable key is intended for browser use; access is enforced by Auth + RLS.
+        const SUPABASE_URL = 'https://ibjwvjdztyfaquztgyke.supabase.co';
+        const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable__Ol6UwuiExkpaDcHFBaQ0A_iobPXy7D';
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+            auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+            realtime: { params: { eventsPerSecond: 5 } }
+        });
+
+        let currentUser = null;
+        let appInitialized = false;
+        let lastSyncedSnapshot = null;
+        let localChangeVersion = 0;
+        let lastSavedVersion = 0;
+        let cloudSyncPromise = null;
+        let cloudSyncRequested = false;
+        let cloudChannel = null;
+        let cloudRefreshTimer = null;
+        let remoteRefreshPending = false;
+
         // ===================== INIT =====================
         function init() {
             loadData();
@@ -1154,38 +1278,324 @@
         }
 
         function loadData() {
+            // Student/session/fee records are loaded from Supabase before the main UI starts.
+            // Keep only the selected-student preference locally, isolated per authenticated user.
+            if (!currentUser) return;
             try {
-                const saved = localStorage.getItem(STORAGE_KEY);
-                if (!saved) return;
-
-                const parsed = JSON.parse(saved);
-                const validation = validateTrackerData(parsed);
-
-                if (!validation.valid) {
-                    console.error('Stored data is invalid:', validation.error);
-                    return;
-                }
-
-                data = {
-                    students: parsed.students,
-                    sessions: parsed.sessions,
-                    fees: Array.isArray(parsed.fees) ? parsed.fees : [],
-                    selectedStudentId: parsed.selectedStudentId || null
-                };
-
-                if (!data.students.some(s => s.id === data.selectedStudentId)) {
+                const savedId = localStorage.getItem('tutorTracker_selected_' + currentUser.id);
+                if (savedId && data.students.some(student => student.id === savedId)) {
+                    data.selectedStudentId = savedId;
+                } else if (!data.students.some(student => student.id === data.selectedStudentId)) {
                     data.selectedStudentId = null;
                 }
             } catch (e) {
-                console.error('Failed to load data', e);
+                console.warn('Could not read selected-student preference:', e);
             }
         }
 
         function saveData() {
+            if (!currentUser) return;
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+                if (data.selectedStudentId) {
+                    localStorage.setItem('tutorTracker_selected_' + currentUser.id, data.selectedStudentId);
+                } else {
+                    localStorage.removeItem('tutorTracker_selected_' + currentUser.id);
+                }
             } catch (e) {
-                console.error('Failed to save data', e);
+                console.warn('Could not save selected-student preference:', e);
+            }
+            localChangeVersion += 1;
+            requestCloudSync();
+        }
+
+        function makeCloudSnapshot(source) {
+            return {
+                students: source.students.map(s => ({ id: s.id, name: s.name })),
+                sessions: source.sessions.map(s => ({
+                    id: s.id,
+                    studentId: s.studentId,
+                    date: s.date,
+                    startTime: s.startTime,
+                    endTime: s.endTime,
+                    durationMinutes: s.durationMinutes
+                })),
+                fees: source.fees.map(f => ({ id: f.id, studentId: f.studentId, date: f.date }))
+            };
+        }
+
+        async function readCloudData() {
+            if (!currentUser) throw new Error('You are signed out.');
+
+            const results = await Promise.all([
+                supabaseClient.from('students')
+                    .select('id,name,created_at')
+                    .eq('user_id', currentUser.id)
+                    .order('created_at', { ascending: true }),
+                supabaseClient.from('sessions')
+                    .select('id,student_id,date,start_time,end_time,duration_minutes')
+                    .eq('user_id', currentUser.id)
+                    .order('date', { ascending: true }),
+                supabaseClient.from('fees')
+                    .select('id,student_id,date')
+                    .eq('user_id', currentUser.id)
+                    .order('date', { ascending: true })
+            ]);
+
+            for (const result of results) {
+                if (result.error) throw result.error;
+            }
+
+            return {
+                students: results[0].data.map(s => ({ id: s.id, name: s.name })),
+                sessions: results[1].data.map(s => ({
+                    id: s.id,
+                    studentId: s.student_id,
+                    date: s.date,
+                    startTime: s.start_time,
+                    endTime: s.end_time,
+                    durationMinutes: Number(s.duration_minutes)
+                })),
+                fees: results[2].data.map(f => ({ id: f.id, studentId: f.student_id, date: f.date })),
+                selectedStudentId: null
+            };
+        }
+
+        async function loadCloudData() {
+            const cloudData = await readCloudData();
+            data = cloudData;
+            lastSyncedSnapshot = makeCloudSnapshot(data);
+            lastSavedVersion = localChangeVersion;
+            loadData();
+        }
+
+        function updateCloudSyncStatus(message) {
+            const el = document.getElementById('cloudSyncStatus');
+            if (el) el.textContent = message;
+        }
+
+        async function upsertChangedRows(table, currentRows, previousRows, fields, toRow) {
+            const previousById = new Map(previousRows.map(row => [row.id, row]));
+            const changed = currentRows.filter(row => {
+                const previous = previousById.get(row.id);
+                return !previous || fields.some(field => previous[field] !== row[field]);
+            }).map(toRow);
+
+            if (!changed.length) return;
+            const { error } = await supabaseClient.from(table).upsert(changed, { onConflict: 'id' });
+            if (error) throw error;
+        }
+
+        async function deleteRemovedRows(table, currentRows, previousRows) {
+            const currentIds = new Set(currentRows.map(row => row.id));
+            const removedIds = previousRows.filter(row => !currentIds.has(row.id)).map(row => row.id);
+            if (!removedIds.length) return;
+
+            const { error } = await supabaseClient.from(table)
+                .delete()
+                .in('id', removedIds)
+                .eq('user_id', currentUser.id);
+            if (error) throw error;
+        }
+
+        async function runCloudSyncQueue() {
+            try {
+                while (cloudSyncRequested && currentUser) {
+                    cloudSyncRequested = false;
+                    const target = makeCloudSnapshot(data);
+                    const baseline = lastSyncedSnapshot;
+                    const versionAtStart = localChangeVersion;
+                    if (!baseline) throw new Error('Cloud data has not finished loading.');
+
+                    updateCloudSyncStatus('Saving changes to cloud…');
+
+                    await upsertChangedRows('students', target.students, baseline.students,
+                        ['name'], row => ({ id: row.id, name: row.name }));
+                    await upsertChangedRows('sessions', target.sessions, baseline.sessions,
+                        ['studentId', 'date', 'startTime', 'endTime', 'durationMinutes'],
+                        row => ({
+                            id: row.id,
+                            student_id: row.studentId,
+                            date: row.date,
+                            start_time: row.startTime,
+                            end_time: row.endTime,
+                            duration_minutes: row.durationMinutes
+                        }));
+                    await upsertChangedRows('fees', target.fees, baseline.fees,
+                        ['studentId', 'date'],
+                        row => ({ id: row.id, student_id: row.studentId, date: row.date }));
+
+                    // Delete dependent records before students to respect foreign keys.
+                    await deleteRemovedRows('sessions', target.sessions, baseline.sessions);
+                    await deleteRemovedRows('fees', target.fees, baseline.fees);
+                    await deleteRemovedRows('students', target.students, baseline.students);
+
+                    lastSyncedSnapshot = target;
+                    lastSavedVersion = versionAtStart;
+                    updateCloudSyncStatus('Cloud sync is up to date');
+                    if (localChangeVersion !== versionAtStart) cloudSyncRequested = true;
+                }
+            } catch (error) {
+                cloudSyncRequested = false;
+                console.error('Cloud sync failed:', error);
+                updateCloudSyncStatus('Cloud sync failed — your latest change may not be saved');
+                showToast('Cloud sync failed. Check your connection and try again.', 'error');
+            } finally {
+                cloudSyncPromise = null;
+                if (cloudSyncRequested) requestCloudSync();
+                if (remoteRefreshPending) scheduleCloudRefresh();
+            }
+        }
+
+        function requestCloudSync() {
+            if (!currentUser || !lastSyncedSnapshot) return;
+            cloudSyncRequested = true;
+            if (cloudSyncPromise) return;
+            cloudSyncPromise = runCloudSyncQueue();
+        }
+
+        function renderCloudData() {
+            renderStudents();
+            populateStudentSelect();
+            document.getElementById('studentSelect').value = data.selectedStudentId || '';
+            renderSummary();
+            renderHistory();
+        }
+
+        function scheduleCloudRefresh() {
+            remoteRefreshPending = true;
+            if (cloudRefreshTimer) clearTimeout(cloudRefreshTimer);
+            cloudRefreshTimer = setTimeout(refreshCloudDataIfSafe, 500);
+        }
+
+        async function refreshCloudDataIfSafe() {
+            cloudRefreshTimer = null;
+            if (!currentUser) {
+                remoteRefreshPending = false;
+                return;
+            }
+            // Don't overwrite edits that haven't completed their cloud save.
+            if (cloudSyncPromise || localChangeVersion !== lastSavedVersion) return;
+
+            const versionAtStart = localChangeVersion;
+            const selectedBeforeRefresh = data.selectedStudentId;
+            try {
+                const refreshed = await readCloudData();
+                if (versionAtStart !== localChangeVersion || cloudSyncPromise) return;
+
+                if (refreshed.students.some(s => s.id === selectedBeforeRefresh)) {
+                    refreshed.selectedStudentId = selectedBeforeRefresh;
+                } else {
+                    const stored = localStorage.getItem('tutorTracker_selected_' + currentUser.id);
+                    refreshed.selectedStudentId =
+                        stored && refreshed.students.some(s => s.id === stored) ? stored : null;
+                }
+
+                data = refreshed;
+                lastSyncedSnapshot = makeCloudSnapshot(data);
+                lastSavedVersion = localChangeVersion;
+                remoteRefreshPending = false;
+                renderCloudData();
+                updateCloudSyncStatus('Synced with your other devices');
+            } catch (error) {
+                console.error('Could not refresh cloud data:', error);
+                updateCloudSyncStatus('Could not refresh cloud data');
+                remoteRefreshPending = false;
+            }
+        }
+
+        function subscribeToCloudChanges() {
+            if (!currentUser) return;
+            if (cloudChannel) {
+                supabaseClient.removeChannel(cloudChannel).catch(() => {});
+                cloudChannel = null;
+            }
+
+            const ownerFilter = 'user_id=eq.' + currentUser.id;
+            cloudChannel = supabaseClient.channel('tutor-tracker-' + currentUser.id)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: ownerFilter }, scheduleCloudRefresh)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: ownerFilter }, scheduleCloudRefresh)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'fees', filter: ownerFilter }, scheduleCloudRefresh)
+                .subscribe(status => {
+                    if (status === 'SUBSCRIBED') updateCloudSyncStatus('Cloud sync connected');
+                });
+        }
+
+        function showAuthMessage(message, isError) {
+            const el = document.getElementById('authMessage');
+            el.textContent = message || '';
+            el.classList.toggle('error', Boolean(isError));
+        }
+
+        async function activateCloudApp(user) {
+            currentUser = user;
+            await loadCloudData();
+            if (!appInitialized) {
+                init();
+                appInitialized = true;
+            } else {
+                renderCloudData();
+            }
+
+            document.getElementById('signedInEmail').textContent = user.email || 'Signed-in account';
+            document.getElementById('accountBar').style.display = 'flex';
+            document.getElementById('authGate').style.display = 'none';
+            document.getElementById('authGate').setAttribute('aria-hidden', 'true');
+            updateCloudSyncStatus('Cloud data loaded');
+            subscribeToCloudChanges();
+        }
+
+        async function handleAuthSubmit(event) {
+            event.preventDefault();
+            const button = document.getElementById('authSubmitBtn');
+            const email = document.getElementById('authEmail').value.trim();
+            const password = document.getElementById('authPassword').value;
+            button.disabled = true;
+            button.textContent = 'Signing in…';
+            showAuthMessage('Signing in securely…', false);
+
+            try {
+                const { data: authData, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+                if (error) throw error;
+                if (!authData.user) throw new Error('Login succeeded but no user was returned.');
+                await activateCloudApp(authData.user);
+                document.getElementById('authPassword').value = '';
+            } catch (error) {
+                console.error('Sign-in failed:', error);
+                currentUser = null;
+                document.getElementById('authGate').style.display = 'grid';
+                document.getElementById('authGate').setAttribute('aria-hidden', 'false');
+                const detail = error && error.message ? error.message : 'Unknown error';
+                showAuthMessage('Could not sign in or load cloud records: ' + detail, true);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Sign in';
+            }
+        }
+
+        async function handleSignOut() {
+            if (!confirm('Sign out of Tutoring Time Tracker on this device?')) return;
+            const { error } = await supabaseClient.auth.signOut({ scope: 'local' });
+            if (error) {
+                showToast('Could not sign out. Please try again.', 'error');
+                return;
+            }
+            window.location.reload();
+        }
+
+        async function bootstrapAuth() {
+            showAuthMessage('Checking sign-in…', false);
+            try {
+                const { data: authData, error } = await supabaseClient.auth.getSession();
+                if (error) throw error;
+                if (authData.session && authData.session.user) {
+                    await activateCloudApp(authData.session.user);
+                } else {
+                    document.getElementById('authEmail').focus();
+                    showAuthMessage('Sign in with your authorized account.', false);
+                }
+            } catch (error) {
+                console.error('Could not initialize authentication:', error);
+                showAuthMessage('Could not connect to Supabase. Check your internet connection and reload.', true);
             }
         }
 
@@ -2821,7 +3231,17 @@
         });
 
         // ===================== START =====================
-        init();
+        document.getElementById('authForm').addEventListener('submit', handleAuthSubmit);
+        document.getElementById('signOutBtn').addEventListener('click', handleSignOut);
+
+        supabaseClient.auth.onAuthStateChange((event) => {
+            // Keep browser tabs consistent when this device is signed out.
+            if (event === 'SIGNED_OUT' && currentUser) {
+                window.location.reload();
+            }
+        });
+
+        bootstrapAuth();
     </script>
 </body>
 </html>
