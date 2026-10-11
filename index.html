@@ -1164,7 +1164,7 @@
                     })
                     .catch((err) => console.log('SW registration failed:', err));
 
-                const APP_BUILD_ID = 'cloud-sync-v9';
+                const APP_BUILD_ID = 'cloud-sync-v10';
                 navigator.serviceWorker.addEventListener('controllerchange', () => {
                     // Reload once for each new app build, even if an older build
                     // already set the previous one-time reload flag in this tab.
@@ -1451,12 +1451,37 @@
             renderCloudData();
         }
 
+        async function reconcileFeeIdsWithCloud() {
+            if (!currentUser || !data.fees.length) return;
+
+            // Match imported fee dates to existing cloud IDs before upserting by ID.
+            // This prevents a backup's different fee ID from colliding with an existing
+            // (student, date) pair, while still allowing an existing ID's date to change.
+            const { data: remoteFees, error } = await supabaseClient
+                .from('fees')
+                .select('id,student_id,date')
+                .eq('user_id', currentUser.id);
+            if (error) throw error;
+
+            const feeKey = (studentId, date) => JSON.stringify([studentId, date]);
+            const remoteByKey = new Map();
+            for (const fee of (remoteFees || [])) {
+                remoteByKey.set(feeKey(fee.student_id, fee.date), fee);
+            }
+
+            for (const fee of data.fees) {
+                const remote = remoteByKey.get(feeKey(fee.studentId, fee.date));
+                if (remote && remote.id !== fee.id) fee.id = remote.id;
+            }
+        }
+
         async function runCloudSyncQueue() {
             lastCloudSyncError = null;
             try {
                 while (cloudSyncRequested && currentUser) {
                     cloudSyncRequested = false;
                     await reconcileStudentIdsWithCloud();
+                    await reconcileFeeIdsWithCloud();
                     const target = makeCloudSnapshot(data);
                     const baseline = lastSyncedSnapshot;
                     const versionAtStart = localChangeVersion;
@@ -1478,7 +1503,7 @@
                         }));
                     await upsertChangedRows('fees', target.fees, baseline.fees,
                         ['studentId', 'date'],
-                        row => ({ id: row.id, user_id: currentUser.id, student_id: row.studentId, date: row.date }), 'user_id,student_id,date');
+                        row => ({ id: row.id, student_id: row.studentId, date: row.date }));
 
                     // Delete dependent records before students to respect foreign keys.
                     await deleteRemovedRows('sessions', target.sessions, baseline.sessions);
