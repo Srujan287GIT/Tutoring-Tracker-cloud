@@ -1476,7 +1476,7 @@
                         }));
                     await upsertChangedRows('fees', target.fees, baseline.fees,
                         ['studentId', 'date'],
-                        row => ({ id: row.id, student_id: row.studentId, date: row.date }));
+                        row => ({ id: row.id, user_id: currentUser.id, student_id: row.studentId, date: row.date }), 'user_id,student_id,date');
 
                     // Delete dependent records before students to respect foreign keys.
                     await deleteRemovedRows('sessions', target.sessions, baseline.sessions);
