@@ -1452,6 +1452,7 @@
         }
 
         async function runCloudSyncQueue() {
+            lastCloudSyncError = null;
             try {
                 while (cloudSyncRequested && currentUser) {
                     cloudSyncRequested = false;
@@ -1491,6 +1492,7 @@
                 }
             } catch (error) {
                 cloudSyncRequested = false;
+                lastCloudSyncError = error;
                 console.error('Cloud sync failed:', error);
                 updateCloudSyncStatus('Cloud sync failed — your latest change may not be saved');
                 const message = error && error.message ? error.message : 'Check your connection and try again.';
