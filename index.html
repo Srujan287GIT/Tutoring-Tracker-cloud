@@ -1164,7 +1164,7 @@
                     })
                     .catch((err) => console.log('SW registration failed:', err));
 
-                const APP_BUILD_ID = 'cloud-sync-v10';
+                const APP_BUILD_ID = 'cloud-sync-v11';
                 navigator.serviceWorker.addEventListener('controllerchange', () => {
                     // Reload once for each new app build, even if an older build
                     // already set the previous one-time reload flag in this tab.
@@ -3082,6 +3082,25 @@
 
                         historyCycleFilter = 'all';
                         historyMonthFilter = 'all';
+
+                        // After import, show a month that actually contains imported
+                        // sessions instead of leaving the summary on the current month.
+                        // The backup contains historical sessions, so the current month
+                        // may legitimately show zero even when import succeeded.
+                        const latestImportedSessionDate = data.sessions.reduce(
+                            (latest, session) => !latest || session.date > latest ? session.date : latest,
+                            null
+                        );
+                        if (latestImportedSessionDate) {
+                            const importedMonth = latestImportedSessionDate.slice(0, 7);
+                            document.getElementById('summaryMonth').value = importedMonth;
+                            historyViewMode = 'month';
+                            historyMonthFilter = importedMonth;
+                        } else {
+                            document.getElementById('summaryMonth').value = formatMonthForInput(new Date());
+                            historyViewMode = 'cycle';
+                        }
+
                         editingSessionId = null;
                         document.getElementById('saveBtn').textContent = '💾 Save Session';
 
