@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tutor-tracker-v10-import-fix';
+const CACHE_NAME = 'tutor-tracker-v11-import-month';
 const FILES_TO_CACHE = [
     './',
     './index.html',
