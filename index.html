@@ -1261,6 +1261,7 @@
         let localChangeVersion = 0;
         let lastSavedVersion = 0;
         let cloudSyncPromise = null;
+        let lastCloudSyncError = null;
         let cloudSyncRequested = false;
         let cloudChannel = null;
         let cloudRefreshTimer = null;
@@ -1502,10 +1503,31 @@
         }
 
         function requestCloudSync() {
-            if (!currentUser || !lastSyncedSnapshot) return;
+            if (!currentUser || !lastSyncedSnapshot) return Promise.resolve();
             cloudSyncRequested = true;
-            if (cloudSyncPromise) return;
-            cloudSyncPromise = runCloudSyncQueue();
+            if (!cloudSyncPromise) {
+                lastCloudSyncError = null;
+                cloudSyncPromise = runCloudSyncQueue();
+            }
+            return cloudSyncPromise;
+        }
+
+        async function waitForCloudSync() {
+            if (!currentUser) throw new Error('You are signed out.');
+            if (!lastSyncedSnapshot) throw new Error('Cloud data has not finished loading.');
+
+            while (true) {
+                if (lastCloudSyncError) throw lastCloudSyncError;
+
+                if (cloudSyncPromise) {
+                    const activePromise = cloudSyncPromise;
+                    await activePromise;
+                    continue;
+                }
+
+                if (!cloudSyncRequested && localChangeVersion === lastSavedVersion) return;
+                await requestCloudSync();
+            }
         }
 
         function renderCloudData() {
