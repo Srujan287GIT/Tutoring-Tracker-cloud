@@ -1510,11 +1510,12 @@
                 cloudChannel = null;
             }
 
-            const ownerFilter = 'user_id=eq.' + currentUser.id;
+            // Row Level Security restricts delivered events to rows this user may see.
+            // Avoid a user_id filter here so DELETE events can also trigger a refresh.
             cloudChannel = supabaseClient.channel('tutor-tracker-' + currentUser.id)
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'students', filter: ownerFilter }, scheduleCloudRefresh)
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions', filter: ownerFilter }, scheduleCloudRefresh)
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'fees', filter: ownerFilter }, scheduleCloudRefresh)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'students' }, scheduleCloudRefresh)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'sessions' }, scheduleCloudRefresh)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'fees' }, scheduleCloudRefresh)
                 .subscribe(status => {
                     if (status === 'SUBSCRIBED') updateCloudSyncStatus('Cloud sync connected');
                 });
@@ -3242,6 +3243,21 @@
         });
 
         bootstrapAuth();
+
+        // Retry pending local changes after the connection returns.
+        window.addEventListener('online', () => {
+            if (!currentUser) {
+                bootstrapAuth();
+                return;
+            }
+            requestCloudSync();
+            scheduleCloudRefresh();
+        });
+
+        // Refresh when returning to an already-open app on another device.
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && currentUser) scheduleCloudRefresh();
+        });
     </script>
 </body>
 </html>
