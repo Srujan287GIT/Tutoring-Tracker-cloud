@@ -1377,7 +1377,7 @@
             if (el) el.textContent = message;
         }
 
-        async function upsertChangedRows(table, currentRows, previousRows, fields, toRow) {
+        async function upsertChangedRows(table, currentRows, previousRows, fields, toRow, onConflict = 'id') {
             const previousById = new Map(previousRows.map(row => [row.id, row]));
             const changed = currentRows.filter(row => {
                 const previous = previousById.get(row.id);
@@ -1385,7 +1385,7 @@
             }).map(toRow);
 
             if (!changed.length) return;
-            const { error } = await supabaseClient.from(table).upsert(changed, { onConflict: 'id' });
+            const { error } = await supabaseClient.from(table).upsert(changed, { onConflict });
             if (error) throw error;
         }
 
