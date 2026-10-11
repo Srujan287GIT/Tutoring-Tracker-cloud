@@ -3061,12 +3061,36 @@
                         document.getElementById('saveBtn').textContent = '💾 Save Session';
 
                         saveData();
-                        renderStudents();
-                        populateStudentSelect();
-                        renderSummary();
-                        renderHistory();
+                        renderCloudData();
+                        updateCloudSyncStatus('Importing backup to cloud…');
+                        showToast('Importing backup to cloud — please wait');
 
-                        showToast('Data imported successfully');
+                        // Do not report success until every table has been saved and
+                        // a fresh read confirms the rows now stored in Supabase.
+                        waitForCloudSync().then(async () => {
+                            const verified = await readCloudData();
+                            const preferredStudentId = data.selectedStudentId;
+                            verified.selectedStudentId =
+                                verified.students.some(s => s.id === preferredStudentId)
+                                    ? preferredStudentId
+                                    : null;
+
+                            data = verified;
+                            lastSyncedSnapshot = makeCloudSnapshot(data);
+                            lastSavedVersion = localChangeVersion;
+                            renderCloudData();
+                            updateCloudSyncStatus('Cloud sync is up to date');
+                            showToast(
+                                `Import verified: ${data.students.length} students, ${data.sessions.length} sessions, ${data.fees.length} fee dates.`
+                            );
+                        }).catch(syncError => {
+                            console.error('Import cloud sync failed:', syncError);
+                            updateCloudSyncStatus('Import not fully saved to cloud');
+                            const detail = syncError && syncError.message
+                                ? syncError.message
+                                : 'Please check your connection and try again.';
+                            showToast(('Import failed to sync: ' + detail).slice(0, 180), 'error');
+                        });
                     });
                 } catch (err) {
                     console.error('Failed to import data:', err);
