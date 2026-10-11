@@ -1397,10 +1397,61 @@
             if (error) throw error;
         }
 
+        async function reconcileStudentIdsWithCloud() {
+            if (!currentUser) return;
+
+            // A second device or stale browser tab may already have created a student
+            // with this name under a different local ID. Reuse that cloud ID so the
+            // unique owner/name index does not reject every subsequent save.
+            const { data: remoteStudents, error } = await supabaseClient
+                .from('students')
+                .select('id,name')
+                .eq('user_id', currentUser.id);
+            if (error) throw error;
+
+            const remoteByName = new Map();
+            for (const student of (remoteStudents || [])) {
+                remoteByName.set(String(student.name).trim().toLocaleLowerCase(), student);
+            }
+
+            const remap = new Map();
+            for (const student of data.students) {
+                const remote = remoteByName.get(String(student.name).trim().toLocaleLowerCase());
+                if (remote && remote.id !== student.id) remap.set(student.id, remote.id);
+            }
+            if (!remap.size) return;
+
+            for (const student of data.students) {
+                if (remap.has(student.id)) student.id = remap.get(student.id);
+            }
+
+            // If duplicate local entries collapse onto the same cloud ID, keep one
+            // student row and retain all linked session and fee history.
+            const seenStudentIds = new Set();
+            data.students = data.students.filter(student => {
+                if (seenStudentIds.has(student.id)) return false;
+                seenStudentIds.add(student.id);
+                return true;
+            });
+
+            for (const session of data.sessions) {
+                if (remap.has(session.studentId)) session.studentId = remap.get(session.studentId);
+            }
+            for (const fee of data.fees) {
+                if (remap.has(fee.studentId)) fee.studentId = remap.get(fee.studentId);
+            }
+            if (remap.has(data.selectedStudentId)) {
+                data.selectedStudentId = remap.get(data.selectedStudentId);
+            }
+
+            renderCloudData();
+        }
+
         async function runCloudSyncQueue() {
             try {
                 while (cloudSyncRequested && currentUser) {
                     cloudSyncRequested = false;
+                    await reconcileStudentIdsWithCloud();
                     const target = makeCloudSnapshot(data);
                     const baseline = lastSyncedSnapshot;
                     const versionAtStart = localChangeVersion;
@@ -1438,7 +1489,8 @@
                 cloudSyncRequested = false;
                 console.error('Cloud sync failed:', error);
                 updateCloudSyncStatus('Cloud sync failed — your latest change may not be saved');
-                showToast('Cloud sync failed. Check your connection and try again.', 'error');
+                const message = error && error.message ? error.message : 'Check your connection and try again.';
+                showToast(('Cloud sync failed: ' + message).slice(0, 180), 'error');
             } finally {
                 cloudSyncPromise = null;
                 if (cloudSyncRequested) requestCloudSync();
