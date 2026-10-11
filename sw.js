@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tutor-tracker-v7';
+const CACHE_NAME = 'tutor-tracker-v8-cloud-auth';
 const FILES_TO_CACHE = [
     './',
     './index.html',
